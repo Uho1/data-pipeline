@@ -1,0 +1,123 @@
+name: Toss KR backfill 분할 (matrix ingest -> export)
+
+# 한국 2026Q1 복구 — 단일 job(4h49m)이 인프라 회수당해서, 종목을 5그룹으로 쪼개
+# 각 짧은 job(~40분)으로 ingest 후, finalize에서 한 번에 export+upload.
+# ingest_tickers_kr 가 kr-dart --tickers 를 지원하고 check_new_filings_kr 로
+# 변경 종목을 추려, 각 그룹이 tk[idx::5] 슬라이스만 처리한다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "lookback days (40 = 5월 실적시즌 커버)"
+        required: false
+        default: "40"
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        idx: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -r requirements.txt boto3 python-dotenv
+      - name: Ingest KR group ${{ matrix.idx }} of 5
+        env:
+          PYTHONUNBUFFERED: "1"
+          STORAGE_BACKEND: parquet
+          DART_API_KEY_1: ${{ secrets.DART_API_KEY_1 }}
+          DART_API_KEY_2: ${{ secrets.DART_API_KEY_2 }}
+          DART_API_KEY_3: ${{ secrets.DART_API_KEY_3 }}
+          DART_API_KEY_4: ${{ secrets.DART_API_KEY_4 }}
+          DART_API_KEY_5: ${{ secrets.DART_API_KEY_5 }}
+          DART_API_KEY_6: ${{ secrets.DART_API_KEY_6 }}
+          DART_API_KEY_7: ${{ secrets.DART_API_KEY_7 }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+        run: |
+          python -u -c "
+          import importlib.util
+          from datetime import date, timedelta
+          spec = importlib.util.spec_from_file_location('au', 'scripts/auto_update.py')
+          au = importlib.util.module_from_spec(spec); spec.loader.exec_module(au)
+          since = (date.today() - timedelta(days=${{ github.event.inputs.lookback_days || '40' }})).strftime('%Y%m%d')
+          tk = au.check_new_filings_kr(since)
+          N = 5; idx = ${{ matrix.idx }}
+          mine = tk[idx::N]
+          print(f'[group {idx}/{N}] since={since} total={len(tk)} mine={len(mine)}', flush=True)
+          if mine:
+              au.restore_parquet_for_tickers({'kr': mine})
+              ok = au.ingest_tickers_kr(mine, since)
+              print(f'[group {idx}] ingest ok={ok}', flush=True)
+              au.sync_parquet_to_r2({'kr': mine})
+          print(f'[group {idx}] DONE', flush=True)
+          "
+
+  finalize:
+    needs: ingest
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps (+pydantic for export)
+        run: pip install -r requirements.txt boto3 python-dotenv pydantic pydantic-settings
+      - name: R2 parquet 다운 (그룹들이 백업한 2026Q1 포함)
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          python -u scripts/download_r2.py \
+            --prefix parquet/kr/financials_quarterly \
+            --prefix parquet/kr/filings \
+            --prefix parquet/kr/ticker_master.parquet \
+            --prefix parquet/kr/dart_corp_master.parquet \
+            --prefix parquet/kr/ingest_checkpoints.parquet \
+            --prefix tickers/kr \
+            --prefix meta
+      - name: 삼성/하이닉스 export + 2026Q1 검증
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "src"
+          STORAGE_BACKEND: parquet
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          python -u scripts/export_toss_data.py --market kr --ticker 005930 --ticker 000660
+          echo "=== 삼성 income.json 최신 분기 ==="
+          python3 -c "import json; d=json.load(open('toss-app/public/toss-data/tickers/kr/005930/detail/income.json')); print('periods 마지막 6:', d.get('periods', [])[-6:])"
+      - name: 전체 KR export
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "src"
+          STORAGE_BACKEND: parquet
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: python -u scripts/export_toss_data.py --market kr --workers 8
+      - name: R2 toss/ 업로드 (증분)
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+        run: python -u scripts/upload_toss_r2.py --workers 16
