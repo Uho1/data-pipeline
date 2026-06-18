@@ -1,0 +1,46 @@
+name: Debug 삼성 sync round-trip
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt boto3 python-dotenv
+      - name: 삼성 ingest -> 로컬 materialize -> sync -> R2 round-trip 추적
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "src"
+          STORAGE_BACKEND: parquet
+          DART_API_KEY_1: ${{ secrets.DART_API_KEY_1 }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          python -u -c "
+          import importlib.util, shutil
+          spec = importlib.util.spec_from_file_location('au', 'scripts/auto_update.py')
+          au = importlib.util.module_from_spec(spec); spec.loader.exec_module(au)
+          from market_data import parquet_reader
+          print('=== 1) restore + ingest 삼성 ===', flush=True)
+          au.restore_parquet_for_tickers({'kr': ['005930']})
+          au.ingest_tickers_kr(['005930'], '20260101')
+          q1 = parquet_reader.bulk_load_financials_quarterly(['005930'], market='kr')
+          d1 = q1.get('005930')
+          print('   로컬 materialize 직후 fiscal_label:', sorted(d1['fiscal_label'].dropna().astype(str))[-4:] if d1 is not None else 'NONE', flush=True)
+          print('=== 2) sync_parquet_to_r2 ===', flush=True)
+          au.sync_parquet_to_r2({'kr': ['005930']})
+          print('=== 3) 로컬 삭제 후 R2에서 재download ===', flush=True)
+          shutil.rmtree('data/parquet/kr/financials_quarterly/ticker=005930', ignore_errors=True)
+          au.restore_parquet_for_tickers({'kr': ['005930']})
+          q2 = parquet_reader.bulk_load_financials_quarterly(['005930'], market='kr')
+          d2 = q2.get('005930')
+          print('   R2 round-trip 후 fiscal_label:', sorted(d2['fiscal_label'].dropna().astype(str))[-4:] if d2 is not None else 'NONE', flush=True)
+          "
