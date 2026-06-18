@@ -90,6 +90,19 @@ jobs:
             --prefix parquet/kr/ingest_checkpoints.parquet \
             --prefix tickers/kr \
             --prefix meta
+      - name: data/tickers JSON 재생성 (financials parquet → JSON, 2026Q1 반영)
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "src"
+          STORAGE_BACKEND: parquet
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          python -u -m market_data.export_json --market kr
+          echo "=== 삼성 data/tickers JSON financials periods (재생성 후) ==="
+          python3 -c "import json; d=json.load(open('data/tickers/kr/005930.json')); print(d.get('financials',{}).get('periods',[])[-6:])" 2>&1 || echo "(확인 실패)"
       - name: 삼성/하이닉스 export + 2026Q1 검증
         env:
           PYTHONUNBUFFERED: "1"
