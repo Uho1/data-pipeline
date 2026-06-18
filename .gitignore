@@ -1,4 +1,6 @@
 data/
+!data/universe/
+!data/universe/*.csv
 .env
 .venv/
 __pycache__/
