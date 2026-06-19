@@ -59,9 +59,9 @@ jobs:
               au.restore_parquet_for_tickers({'kr': mine})
               ts = ','.join(mine); yr = date.today().year
               au._run_cli(['kr-dart','filings','--tickers',ts,'--start-date',since], 'filings')
-              au._run_cli(['kr-dart','financials','--tickers',ts,'--start-year',str(yr-1),'--end-year',str(yr)], 'financials')
-              # materialize 종목별 — 배치(393 한번에)는 2026Q1 누락, 단독은 정상이므로 1개씩
+              # financials + materialize 둘 다 종목별 — 배치는 2026 떨어뜨림, 디버그 단독은 정상
               for t in mine:
+                  au._run_cli(['kr-dart','financials','--tickers',t,'--start-year',str(yr-1),'--end-year',str(yr)], 'fin-'+t)
                   au._run_cli(['kr-dart','materialize','--tickers',t,'--start-year',str(yr-1),'--end-year',str(yr)], 'mat-'+t)
               au.sync_parquet_to_r2({'kr': mine})
           print(f'[group {idx}] DONE', flush=True)
