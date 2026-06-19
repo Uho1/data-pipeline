@@ -1338,7 +1338,7 @@ def _export_ticker_kr(ticker: str) -> dict | None:
 
     # Fetch quarter-end prices only for market_cap calc and valuation_ttm
     prices_block, price_df = None, None
-    if financials and "periods" in financials:
+    if financials and "periods" in financials and os.environ.get("MDL_SKIP_KR_PRICES") != "1":
         prices_block, price_df = _kr_prices_for_dates(ticker, financials["periods"])
         if price_df is not None:
             financials = _build_financials_block(ticker, "kr", price_df=price_df)

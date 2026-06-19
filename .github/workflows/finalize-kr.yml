@@ -11,7 +11,7 @@ on:
 jobs:
   finalize:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,6 +23,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONPATH: "src"
           STORAGE_BACKEND: parquet
+          MDL_SKIP_KR_PRICES: "1"
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -32,7 +33,6 @@ jobs:
           set -e
           echo "=== 1) R2 download (financials_quarterly 등) ==="
           python -u scripts/download_r2.py \
-            --prefix parquet/kr/prices \
             --prefix parquet/kr/financials_quarterly \
             --prefix parquet/kr/filings \
             --prefix parquet/kr/ticker_master.parquet \
