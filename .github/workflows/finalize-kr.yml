@@ -11,7 +11,7 @@ on:
 jobs:
   finalize:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,6 +32,7 @@ jobs:
           set -e
           echo "=== 1) R2 download (financials_quarterly 등) ==="
           python -u scripts/download_r2.py \
+            --prefix parquet/kr/prices \
             --prefix parquet/kr/financials_quarterly \
             --prefix parquet/kr/filings \
             --prefix parquet/kr/ticker_master.parquet \
