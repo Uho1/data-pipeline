@@ -48,17 +48,17 @@ jobs:
           print('=== 1) restore 005930 ===', flush=True)
           au.restore_parquet_for_tickers({'kr': ['005930']})
 
-          print('=== 2) raw 2025/2026 삭제 (강제 재fetch 유도) ===', flush=True)
+          print('=== 2) raw 2026만 삭제 (강제 재fetch 유도, 2025는 정상이라 보존) ===', flush=True)
           removed = 0
           for p in glob.glob('data/parquet/kr/dart_financials_raw/**/*.parquet', recursive=True):
               df = pd.read_parquet(p)
               if 'bsns_year' not in df.columns:
                   continue
               before = len(df)
-              df = df[~pd.to_numeric(df['bsns_year'], errors='coerce').isin([2025, 2026])]
+              df = df[~pd.to_numeric(df['bsns_year'], errors='coerce').isin([2026])]
               df.to_parquet(p, index=False)
               removed += before - len(df)
-          print(f'  삭제된 raw rows: {removed}', flush=True)
+          print(f'  삭제된 raw rows(2026): {removed}', flush=True)
 
           print('=== 3) ingest (filings -> financials FRESH fetch -> materialize) ===', flush=True)
           au.ingest_tickers_kr(['005930'], '20260101')
@@ -73,6 +73,8 @@ jobs:
           au.sync_parquet_to_r2({'kr': ['005930']})
           "
           echo "=== 5) income.json export (parquet -> data/tickers -> income) ==="
+          mkdir -p data/meta
+          [ -f data/meta/last_updated.json ] || echo '{}' > data/meta/last_updated.json
           python -u -m market_data export-json --market kr --tickers 005930
           echo "--- data/tickers JSON financials periods ---"
           python3 -c "import json; d=json.load(open('data/tickers/kr/005930.json')); print(d.get('financials',{}).get('periods',[])[-6:])"
