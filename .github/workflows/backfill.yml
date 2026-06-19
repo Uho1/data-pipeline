@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        idx: [0, 1, 2, 3, 4]
+        idx: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,15 +52,15 @@ jobs:
           au = importlib.util.module_from_spec(spec); spec.loader.exec_module(au)
           since = (date.today() - timedelta(days=${{ github.event.inputs.lookback_days || '40' }})).strftime('%Y%m%d')
           tk = au.check_new_filings_kr(since)
-          N = 5; idx = ${{ matrix.idx }}
+          N = 40; idx = ${{ matrix.idx }}
           mine = tk[idx::N]
           print(f'[group {idx}/{N}] since={since} total={len(tk)} mine={len(mine)}', flush=True)
           if mine:
               au.restore_parquet_for_tickers({'kr': mine})
-              ts = ','.join(mine); yr = date.today().year
-              au._run_cli(['kr-dart','filings','--tickers',ts,'--start-date',since], 'filings')
-              # financials + materialize 둘 다 종목별 — 배치는 2026 떨어뜨림, 디버그 단독은 정상
+              yr = date.today().year
+              # filings/financials/materialize 전부 종목별 — 디버그 단독과 동일 경로 (배치는 2026 누락)
               for t in mine:
+                  au._run_cli(['kr-dart','filings','--tickers',t,'--start-date',since], 'fil-'+t)
                   au._run_cli(['kr-dart','financials','--tickers',t,'--start-year',str(yr-1),'--end-year',str(yr)], 'fin-'+t)
                   au._run_cli(['kr-dart','materialize','--tickers',t,'--start-year',str(yr-1),'--end-year',str(yr)], 'mat-'+t)
               au.sync_parquet_to_r2({'kr': mine})
