@@ -1,0 +1,75 @@
+name: KR finalize 재실행 (income 2026Q1)
+
+# R2 financials_quarterly에는 2026Q1이 이미 있으나(ingest 성공), 직전 backfill의
+# finalize download가 ingest sync와의 타이밍 레이스로 2026Q1을 못 받아 income에 누락됨.
+# ingest 없이 finalize만 재실행: R2 download → 2026Q1 assert → 전체 export → upload.
+# 단일-종목 export(--ticker)는 쓰지 않음 (index 비우기 사고 방지). 전체(--market kr)만.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt boto3 python-dotenv pydantic pydantic-settings
+      - name: R2 download → 2026Q1 assert → export → upload
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "src"
+          STORAGE_BACKEND: parquet
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+        run: |
+          set -e
+          echo "=== 1) R2 download (financials_quarterly 등) ==="
+          python -u scripts/download_r2.py \
+            --prefix parquet/kr/financials_quarterly \
+            --prefix parquet/kr/filings \
+            --prefix parquet/kr/ticker_master.parquet \
+            --prefix parquet/kr/dart_corp_master.parquet \
+            --prefix parquet/kr/ingest_checkpoints.parquet \
+            --prefix tickers/kr \
+            --prefix meta
+          echo "=== 2) download된 financials_quarterly 005930 2026Q1 확인 ==="
+          python3 -c "
+          import sys; sys.path.insert(0,'src')
+          from market_data import parquet_reader
+          q = parquet_reader.bulk_load_financials_quarterly(['005930','000660'], market='kr')
+          for tk in ['005930','000660']:
+              d = q.get(tk)
+              labels = sorted(d['fiscal_label'].dropna().astype(str)) if d is not None else []
+              print(f'  {tk} fiscal_label 최근:', labels[-4:])
+          d = q.get('005930')
+          labels = sorted(d['fiscal_label'].dropna().astype(str)) if d is not None else []
+          assert '2026Q1' in labels, 'FAIL: download financials_quarterly에 2026Q1 없음 (R2 sync 미반영)'
+          print('  OK: download financials_quarterly에 2026Q1 있음')
+          "
+          echo "=== 3) export-json --market kr (전체, data/tickers 재생성) ==="
+          python -u -m market_data export-json --market kr
+          python3 -c "import json; d=json.load(open('data/tickers/kr/005930.json')); ps=d.get('financials',{}).get('periods',[]); print('  삼성 data/tickers periods:', ps[-4:]); assert '2026-03-31' in ps, 'FAIL: data/tickers에 2026Q1 없음'; print('  OK: data/tickers 2026Q1')"
+          echo "=== 4) export_toss_data --market kr (전체) ==="
+          python -u scripts/export_toss_data.py --market kr --workers 8
+          echo "=== 5) upload → R2 ==="
+          python -u scripts/upload_toss_r2.py --workers 16
+          echo "=== 6) R2 income/index 최종 확인 ==="
+          python3 -c "
+          import boto3, os, json
+          c = boto3.client('s3', endpoint_url='https://%s.r2.cloudflarestorage.com' % os.environ['R2_ACCOUNT_ID'], aws_access_key_id=os.environ['R2_ACCESS_KEY_ID'], aws_secret_access_key=os.environ['R2_SECRET_ACCESS_KEY'])
+          for tk in ['005930','000660','005380']:
+              o = c.get_object(Bucket=os.environ['R2_BUCKET_NAME'], Key=f'toss/tickers/kr/{tk}/detail/income.json')
+              print(tk, 'income:', json.load(o['Body']).get('periods',[])[-4:])
+          o = c.get_object(Bucket=os.environ['R2_BUCKET_NAME'], Key='toss/index/kr.json')
+          cnt = json.load(o['Body']).get('count')
+          print('index count:', cnt)
+          assert cnt and cnt > 2000, 'FAIL: index 비정상'
+          print('>>> SUCCESS')
+          "
