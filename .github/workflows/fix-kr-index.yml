@@ -1,0 +1,59 @@
+name: Fix KR index (긴급 복구)
+
+# index/kr.json이 count:0으로 비어 앱에서 한국 주식이 안 보이는 문제 긴급 복구.
+# 원인: build_index는 data/meta/ticker_master_kr.json(load_ticker_master)을 읽는데,
+#       그 meta 파일이 없으면 빈 목록을 만든다. meta만 받아 index 재생성 후 업로드.
+# 종목 데이터(main/income 등)는 R2에 그대로 있으므로 건드리지 않는다.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -r requirements.txt boto3 python-dotenv pydantic pydantic-settings
+      - name: meta restore → build_index → upload index
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "src"
+          STORAGE_BACKEND: parquet
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+        run: |
+          set -e
+          echo "=== 1) meta download (ticker_master_kr.json 포함) ==="
+          python -u scripts/download_r2.py --prefix meta
+          ls -la data/meta/ 2>/dev/null || echo "(no data/meta)"
+          echo "=== 2) build_index('kr') — ticker_master 기반 목록 재생성 ==="
+          python -u -c "
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('etd', 'scripts/export_toss_data.py')
+          etd = importlib.util.module_from_spec(spec); spec.loader.exec_module(etd)
+          n = etd.build_index('kr', Path('toss-app/public/toss-data'))
+          print('index items count:', n)
+          assert n > 0, 'FAIL: ticker_master 비어 index가 0 (meta 미수신)'
+          print('OK: index', n, '종목')
+          "
+          echo "=== 3) upload index → R2 ==="
+          python -u scripts/upload_toss_r2.py --workers 4
+          echo "=== 4) R2 index/kr.json 최종 확인 ==="
+          python3 -c "
+          import boto3, os, json
+          c = boto3.client('s3', endpoint_url='https://%s.r2.cloudflarestorage.com' % os.environ['R2_ACCOUNT_ID'], aws_access_key_id=os.environ['R2_ACCESS_KEY_ID'], aws_secret_access_key=os.environ['R2_SECRET_ACCESS_KEY'])
+          obj = c.get_object(Bucket=os.environ['R2_BUCKET_NAME'], Key='toss/index/kr.json')
+          d = json.load(obj['Body'])
+          print('R2 index count:', d.get('count'), '| 샘플:', [it.get('ticker') for it in d.get('items', [])[:5]])
+          assert d.get('count', 0) > 0, 'FAIL: R2 index 여전히 0'
+          print('>>> SUCCESS: R2 index/kr.json 복구 (', d.get('count'), '종목 )')
+          "
