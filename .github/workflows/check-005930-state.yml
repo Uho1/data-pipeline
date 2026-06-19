@@ -1,0 +1,56 @@
+name: Check 005930 R2 state (진단용)
+
+# 진단: 현재 R2의 005930 financials_quarterly / dart_financials_raw 상태 확인.
+# restore만 하고 ingest/sync/upload는 하지 않음 (읽기 전용 진단).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt boto3 python-dotenv
+      - name: restore 005930 → fiscal_label + raw years (현재 R2 상태)
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "src"
+          STORAGE_BACKEND: parquet
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          python -u -c "
+          import importlib.util
+          spec = importlib.util.spec_from_file_location('au', 'scripts/auto_update.py')
+          au = importlib.util.module_from_spec(spec); spec.loader.exec_module(au)
+          from market_data import parquet_reader, db_reader_kr
+          import pandas as pd
+
+          print('=== restore 005930 (R2 → 로컬) ===', flush=True)
+          au.restore_parquet_for_tickers({'kr': ['005930']})
+
+          print('=== R2 financials_quarterly/005930 fiscal_label ===', flush=True)
+          q = parquet_reader.bulk_load_financials_quarterly(['005930'], market='kr')
+          d = q.get('005930')
+          if d is not None and not d.empty:
+              print('  fiscal_label:', sorted(d['fiscal_label'].dropna().astype(str).unique()))
+              pe = pd.to_datetime(d['PeriodEnd'], errors='coerce').dt.strftime('%Y-%m-%d')
+              print('  2026-03-31(2026Q1) 존재:', (pe == '2026-03-31').any())
+          else:
+              print('  NONE')
+
+          print('=== R2 dart_financials_raw/005930 (year,reprt) ===', flush=True)
+          raw = db_reader_kr.load_dart_financials_raw_for_ticker('005930')
+          if raw is not None and not raw.empty:
+              keys = sorted(set(zip(raw['bsns_year'].astype(str), raw['reprt_code'].astype(str))))
+              print('  최근:', [k for k in keys if k[0] in ('2025','2026')])
+          else:
+              print('  NONE')
+          "
