@@ -1338,7 +1338,7 @@ def _export_ticker_kr(ticker: str) -> dict | None:
 
     # Fetch quarter-end prices only for market_cap calc and valuation_ttm
     prices_block, price_df = None, None
-    if financials and "periods" in financials and os.environ.get("MDL_SKIP_KR_PRICES") != "1":
+    if financials and "periods" in financials:
         prices_block, price_df = _kr_prices_for_dates(ticker, financials["periods"])
         if price_df is not None:
             financials = _build_financials_block(ticker, "kr", price_df=price_df)
@@ -1399,24 +1399,50 @@ def _yf_prices_for_dates(ticker: str, period_dates: list[str]) -> tuple[dict | N
         return None, None
 
 
-def _kr_prices_for_dates(ticker: str, period_dates: list[str]) -> tuple[dict | None, pd.DataFrame | None]:
-    """Fetch KR prices from pykrx for specific quarter-end dates only.
+_KR_CORP_CODE_MAP: dict[str, str] | None = None
 
-    Mirrors _yf_prices_for_dates but uses pykrx (Close, MarketCap, SharesOutstanding).
-    Avoids loading the full daily price parquet.
+
+def _kr_corp_code(ticker: str) -> str | None:
+    """ticker → DART corp_code (dart_corp_master.parquet, 보통주 우선). 캐시."""
+    global _KR_CORP_CODE_MAP
+    if _KR_CORP_CODE_MAP is None:
+        _KR_CORP_CODE_MAP = {}
+        try:
+            from market_data.config import PARQUET_DIR
+            p = PARQUET_DIR / "kr" / "dart_corp_master.parquet"
+            if p.exists():
+                cm = pd.read_parquet(p, columns=["ticker", "corp_code", "is_common_stock"])
+                cm = cm.dropna(subset=["ticker", "corp_code"])
+                if "is_common_stock" in cm.columns:
+                    cm = cm.sort_values("is_common_stock", ascending=False)
+                cm = cm.drop_duplicates(subset=["ticker"], keep="first")
+                _KR_CORP_CODE_MAP = {
+                    str(t).zfill(6): str(c) for t, c in zip(cm["ticker"], cm["corp_code"])
+                }
+        except Exception:
+            _KR_CORP_CODE_MAP = {}
+    return _KR_CORP_CODE_MAP.get(str(ticker).zfill(6))
+
+
+def _kr_prices_for_dates(ticker: str, period_dates: list[str]) -> tuple[dict | None, pd.DataFrame | None]:
+    """Fetch KR quarter-end prices + market cap via 네이버 종가 × DART 발행주식수.
+
+    pykrx가 KRX 로그인 필수화로 막혀, 종가는 네이버 fchart(수정주가),
+    발행주식수는 DART stockTotqySttus(현재 기준)로 시총을 계산한다.
     """
     if not period_dates:
         return None, None
     try:
-        from market_data.krx.prices import fetch_price_frame
+        from market_data.krx.naver_prices import market_cap_frame
         from market_data.db_router import normalize_kr_ticker
 
         dates_dt = pd.to_datetime(period_dates).drop_duplicates().sort_values()
-        start = (dates_dt.min() - pd.Timedelta(days=10)).strftime("%Y%m%d")
-        end = (dates_dt.max() + pd.Timedelta(days=10)).strftime("%Y%m%d")
         ticker_code = normalize_kr_ticker(ticker)
+        corp_code = _kr_corp_code(ticker_code)
+        if not corp_code:
+            return None, None
 
-        frame = fetch_price_frame(ticker=ticker_code, start=start, end=end)
+        frame = market_cap_frame(ticker_code, corp_code)
         if frame is None or frame.empty:
             return None, None
 

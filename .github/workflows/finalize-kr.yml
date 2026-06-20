@@ -11,7 +11,7 @@ on:
 jobs:
   finalize:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,7 +23,13 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONPATH: "src"
           STORAGE_BACKEND: parquet
-          MDL_SKIP_KR_PRICES: "1"
+          DART_API_KEY_1: ${{ secrets.DART_API_KEY_1 }}
+          DART_API_KEY_2: ${{ secrets.DART_API_KEY_2 }}
+          DART_API_KEY_3: ${{ secrets.DART_API_KEY_3 }}
+          DART_API_KEY_4: ${{ secrets.DART_API_KEY_4 }}
+          DART_API_KEY_5: ${{ secrets.DART_API_KEY_5 }}
+          DART_API_KEY_6: ${{ secrets.DART_API_KEY_6 }}
+          DART_API_KEY_7: ${{ secrets.DART_API_KEY_7 }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
