@@ -140,8 +140,10 @@ def run(
     total_objects = 0
     all_objects: list[dict] = []
     for prefix in prefixes:
-        print(f"[list] scanning prefix: {prefix}/")
-        objs = _list_prefix(client, bucket, prefix + "/")
+        # 단일 파일(.parquet/.json)은 "/"를 붙이면 디렉토리로 스캔돼 0건이 됨
+        list_prefix = prefix if prefix.endswith((".parquet", ".json")) else prefix + "/"
+        print(f"[list] scanning prefix: {list_prefix}")
+        objs = _list_prefix(client, bucket, list_prefix)
         print(f"[list]   {len(objs)} objects")
         total_objects += len(objs)
         all_objects.extend(objs)
