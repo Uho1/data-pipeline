@@ -57,6 +57,9 @@ jobs:
           echo "=== 3) export-json --market kr (전체, data/tickers 재생성) ==="
           python -u -m market_data export-json --market kr
           python3 -c "import json; d=json.load(open('data/tickers/kr/005930.json')); ps=d.get('financials',{}).get('periods',[]); print('  삼성 data/tickers periods:', ps[-4:]); assert '2026-03-31' in ps, 'FAIL: data/tickers에 2026Q1 없음'; print('  OK: data/tickers 2026Q1')"
+          echo "=== 3.5) ticker_master 복원 (export-json이 parquet 0으로 덮어쓴 것 되돌림) ==="
+          python -u scripts/download_r2.py --prefix meta
+          python3 -c "import json; d=json.load(open('data/meta/ticker_master_kr.json')); print('  ticker_master count:', d.get('count')); assert d.get('count',0) > 2000, 'FAIL: ticker_master 복원 실패'; print('  OK: ticker_master', d.get('count'))"
           echo "=== 4) export_toss_data --market kr (전체) ==="
           python -u scripts/export_toss_data.py --market kr --workers 8
           echo "=== 5) upload → R2 ==="
