@@ -1,0 +1,53 @@
+name: Debug naver 시총 (Actions IP 검증)
+
+# finalize 전 빠른 검증: GitHub Actions(해외 IP)에서 네이버 fchart 접근 + DART 발행수 + 시총.
+# download_r2 단일파일 수정으로 dart_corp_master가 받아지는지도 확인.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt boto3 python-dotenv
+      - name: dart_corp_master download + naver 시총 1종목
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "src"
+          STORAGE_BACKEND: parquet
+          DART_API_KEY_1: ${{ secrets.DART_API_KEY_1 }}
+          DART_API_KEY_2: ${{ secrets.DART_API_KEY_2 }}
+          DART_API_KEY_3: ${{ secrets.DART_API_KEY_3 }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          echo "=== dart_corp_master download (단일파일 수정 검증) ==="
+          python -u scripts/download_r2.py --prefix parquet/kr/dart_corp_master.parquet
+          ls -la data/parquet/kr/dart_corp_master.parquet 2>&1 | tail -1
+          echo "=== corp_code + 네이버 종가(해외 IP) + DART 발행수 + 시총 ==="
+          python3 -c "
+          import sys; sys.path.insert(0,'src')
+          from market_data.export_json import _kr_corp_code
+          from market_data.krx.naver_prices import fetch_naver_daily, fetch_shares_by_year, market_cap_frame
+          cc = _kr_corp_code('005930')
+          print('corp_code(005930):', cc)
+          daily = fetch_naver_daily('005930')
+          print('네이버 fchart 일봉수:', None if daily is None else len(daily), '| 최근종가:', None if daily is None else float(daily['Close'].iloc[-1]))
+          if cc:
+              sh = fetch_shares_by_year(cc, [2025])
+              print('DART 2025 발행수:', sh)
+              frame = market_cap_frame('005930', cc)
+              if frame is not None:
+                  r = frame.iloc[-1]
+                  print('시총 최근: 종가=%s 발행수=%s 시총(조)=%.1f' % (int(r.Close), int(r.SharesOutstanding), r.MarketCap/1e12))
+              else:
+                  print('market_cap_frame: None')
+          "
